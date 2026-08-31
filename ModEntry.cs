@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net;
 using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using VivantValley.Menus;
@@ -17,6 +19,7 @@ namespace VivantValley;
 /// <summary>The SMAPI entry point.</summary>
 public sealed partial class ModEntry : Mod
 {
+    private const string HostedServiceOrigin = "https://www.vivantvalley.com.cn";
     private const string SaveDataKey = "npc-memories";
     private const string NarrativeSaveDataKey = "npc-narrative-state-v1";
     private const string GeneratedDialogueKey = "firstmod.StardewAIMemories.GeneratedDialogue";
@@ -2247,6 +2250,15 @@ public sealed partial class ModEntry : Mod
         if (!Context.IsWorldReady)
             return;
 
+        if (AiProviderNames.Normalize(config.Ai.ActiveProvider) == AiProviderNames.Hosted)
+        {
+            Game1.activeClickableMenu = new HostedAccountMenu(
+                AuthenticateHostedAsync,
+                (token, model) => CompleteHostedLogin(token, model),
+                RedeemHostedAsync);
+            return;
+        }
+
         Game1.activeClickableMenu = new AiProviderSettingsMenu(
             config.Ai,
             SaveAiProviderSettings,
@@ -2256,6 +2268,83 @@ public sealed partial class ModEntry : Mod
             onSaveConversationUiScale: SaveConversationUiScale,
             proactiveUiScale: config.ProactiveUiScale,
             onSaveProactiveUiScale: SaveProactiveUiScale);
+    }
+
+    private async Task<(bool Success, string Message, string Token, string Model)> AuthenticateHostedAsync(string email, string password, bool register)
+    {
+        string route = register ? "/api/v1/mod/auth/register" : "/api/v1/mod/auth/login";
+        using var request = new HttpRequestMessage(HttpMethod.Post, HostedServiceOrigin + route)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { email, password }), Encoding.UTF8, "application/json"),
+        };
+        using HttpResponseMessage response = await aiHttpClient.SendAsync(request).ConfigureAwait(false);
+        string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (!response.IsSuccessStatusCode)
+            {
+                string message = document.RootElement.TryGetProperty("error", out JsonElement error) && error.TryGetProperty("message", out JsonElement text) ? text.GetString() ?? "请求失败。" : "请求失败。";
+                return (false, message, string.Empty, string.Empty);
+            }
+            string token = document.RootElement.GetProperty("access_token").GetString() ?? string.Empty;
+            string model = "vv-dialogue";
+            try
+            {
+                using var bootstrap = new HttpRequestMessage(HttpMethod.Get, HostedServiceOrigin + "/api/v1/mod/bootstrap");
+                bootstrap.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                using HttpResponseMessage bootstrapResponse = await aiHttpClient.SendAsync(bootstrap).ConfigureAwait(false);
+                if (bootstrapResponse.IsSuccessStatusCode)
+                {
+                    using JsonDocument catalog = JsonDocument.Parse(await bootstrapResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
+                    if (catalog.RootElement.TryGetProperty("models", out JsonElement models) && models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0)
+                        model = models[0].GetProperty("alias").GetString() ?? model;
+                }
+            }
+            catch (Exception ex) { Monitor.Log($"读取托管模型目录失败，将使用默认模型：{ex.Message}", LogLevel.Debug); }
+            return (true, "", token, model);
+        }
+        catch (JsonException) { return (false, "服务端返回无效响应。", string.Empty, string.Empty); }
+    }
+
+    private void CompleteHostedLogin(string token, string model)
+    {
+        config.Ai.ActiveProvider = AiProviderNames.Hosted;
+        config.Ai.Hosted.BaseUrl = "https://www.vivantvalley.com.cn/v1";
+        config.Ai.Hosted.Model = string.IsNullOrWhiteSpace(model) ? "vv-dialogue" : model;
+        config.Ai.Hosted.ApiKey = token;
+        config.ApiUrl = config.Ai.Hosted.BaseUrl;
+        config.Model = config.Ai.Hosted.Model;
+        config.ApiKey = string.Empty;
+        config.PromptForApiKeyEveryLaunch = false;
+        try { Helper.WriteConfig(config); } catch (Exception ex) { Monitor.Log($"保存托管账户失败：{ex.Message}", LogLevel.Warn); }
+        if (AiEndpointResolver.TryResolve(AiProviderNames.Hosted, config.Ai.Hosted.BaseUrl, out string normalized, out Uri endpoint, out _))
+        {
+            Volatile.Write(ref currentAiProfile, new AiRuntimeProfile(AiProviderNames.Hosted, normalized, endpoint, config.Ai.Hosted.Model, token, "托管账户会话", TimeSpan.FromSeconds(config.RequestTimeoutSeconds), config.EnableThinking, config.ReasoningEffort));
+            runtimeApiKey = token;
+            apiKeySource = "托管账户会话";
+        }
+        foreach (ConversationScreenState state in screenStates.GetActiveValues().Select(pair => pair.Value)) state.RequestApiKeyPrompt = false;
+        ShowHud("托管账户已登录，可以开始 AI 对话。", HUDMessage.newQuest_type);
+    }
+
+    private async Task<string> RedeemHostedAsync(string token, string code)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, HostedServiceOrigin + "/api/v1/mod/redeem")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { code }), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using HttpResponseMessage response = await aiHttpClient.SendAsync(request).ConfigureAwait(false);
+        string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        using JsonDocument document = JsonDocument.Parse(body);
+        if (!response.IsSuccessStatusCode)
+        {
+            string message = document.RootElement.TryGetProperty("error", out JsonElement error) && error.TryGetProperty("message", out JsonElement text) ? text.GetString() ?? "兑换失败。" : "兑换失败。";
+            throw new InvalidOperationException(message);
+        }
+        long balance = document.RootElement.GetProperty("available_micros").GetInt64();
+        return $"兑换成功，当前额度：{balance / 1_000_000d:0.######}";
     }
 
     private void SaveConversationUiScale(float value)
@@ -2441,7 +2530,7 @@ public sealed partial class ModEntry : Mod
         string source = "config.json";
         if (key.Length == 0 && !draft.ClearSavedKey)
             key = (saved.ApiKey ?? string.Empty).Trim();
-        if (key.Length == 0)
+        if (key.Length == 0 && provider != AiProviderNames.Hosted)
         {
             string environmentName = provider == AiProviderNames.OpenAI
                 ? "OPENAI_API_KEY"
@@ -2451,7 +2540,7 @@ public sealed partial class ModEntry : Mod
         }
         if (key.Length == 0)
         {
-            failure = "API Key 不能为空。";
+            failure = provider == AiProviderNames.Hosted ? "请先登录 Vivant Valley 托管账户。" : "API Key 不能为空。";
             return false;
         }
 
@@ -2525,7 +2614,7 @@ public sealed partial class ModEntry : Mod
 
         string key = (configured.ApiKey ?? string.Empty).Trim();
         string source = "config.json";
-        if (key.Length == 0)
+        if (key.Length == 0 && provider != AiProviderNames.Hosted)
         {
             string environmentName = provider == AiProviderNames.OpenAI
                 ? "OPENAI_API_KEY"
@@ -2535,7 +2624,7 @@ public sealed partial class ModEntry : Mod
         }
         if (key.Length == 0)
         {
-            failure = $"{provider} API Key 尚未设置";
+            failure = provider == AiProviderNames.Hosted ? "尚未登录 Vivant Valley 托管账户" : $"{provider} API Key 尚未设置";
             return false;
         }
 
@@ -3218,31 +3307,53 @@ public sealed partial class ModEntry : Mod
     {
         bool changed = false;
         config.Ai ??= new AiProviderSettings();
+        config.Ai.Hosted ??= new AiConnectionProfile();
         config.Ai.DeepSeek ??= new AiConnectionProfile();
         config.Ai.OpenAI ??= new AiConnectionProfile();
 
         if (config.Ai.SchemaVersion < 1)
         {
-            string legacyBaseUrl = config.ApiUrl;
-            if (!AiEndpointResolver.TryResolve(
-                    AiProviderNames.DeepSeek,
-                    legacyBaseUrl,
-                    out legacyBaseUrl,
-                    out _,
-                    out _))
+            // A clean install starts in hosted mode. Only configurations that
+            // actually contain a legacy API key are migrated to direct mode.
+            if (!string.IsNullOrWhiteSpace(config.ApiKey))
             {
-                legacyBaseUrl = AiEndpointResolver.GetDefaultBaseUrl(AiProviderNames.DeepSeek);
+                string legacyBaseUrl = config.ApiUrl;
+                if (!AiEndpointResolver.TryResolve(
+                        AiProviderNames.DeepSeek,
+                        legacyBaseUrl,
+                        out legacyBaseUrl,
+                        out _,
+                        out _))
+                {
+                    legacyBaseUrl = AiEndpointResolver.GetDefaultBaseUrl(AiProviderNames.DeepSeek);
+                }
+
+                config.Ai.ActiveProvider = AiProviderNames.DeepSeek;
+                config.Ai.DeepSeek.BaseUrl = legacyBaseUrl;
+                config.Ai.DeepSeek.Model = string.IsNullOrWhiteSpace(config.Model)
+                    ? "deepseek-v4-flash"
+                    : config.Model.Trim();
+                config.Ai.DeepSeek.ApiKey = (config.ApiKey ?? string.Empty).Trim();
             }
 
-            config.Ai.ActiveProvider = AiProviderNames.DeepSeek;
-            config.Ai.DeepSeek.BaseUrl = legacyBaseUrl;
-            config.Ai.DeepSeek.Model = string.IsNullOrWhiteSpace(config.Model)
-                ? "deepseek-v4-flash"
-                : config.Model.Trim();
-            config.Ai.DeepSeek.ApiKey = (config.ApiKey ?? string.Empty).Trim();
-            config.Ai.SchemaVersion = 1;
+            config.Ai.Hosted.BaseUrl = "https://www.vivantvalley.com.cn/v1";
+            config.Ai.Hosted.Model = string.IsNullOrWhiteSpace(config.Ai.Hosted.Model) ? "vv-dialogue" : config.Ai.Hosted.Model.Trim();
+            if (string.IsNullOrWhiteSpace(config.ApiKey))
+                config.Ai.ActiveProvider = AiProviderNames.Hosted;
+            config.Ai.SchemaVersion = 2;
             config.ApiKey = string.Empty;
-            config.PromptForApiKeyEveryLaunch = false;
+            config.PromptForApiKeyEveryLaunch = true;
+            changed = true;
+        }
+
+        if (config.Ai.SchemaVersion < 2)
+        {
+            config.Ai.Hosted ??= new AiConnectionProfile();
+            config.Ai.Hosted.BaseUrl = string.IsNullOrWhiteSpace(config.Ai.Hosted.BaseUrl)
+                ? "https://www.vivantvalley.com.cn/v1"
+                : config.Ai.Hosted.BaseUrl;
+            config.Ai.Hosted.Model = string.IsNullOrWhiteSpace(config.Ai.Hosted.Model) ? "vv-dialogue" : config.Ai.Hosted.Model.Trim();
+            config.Ai.SchemaVersion = 2;
             changed = true;
         }
 
@@ -3255,6 +3366,7 @@ public sealed partial class ModEntry : Mod
 
         changed |= NormalizeAiConnection(config.Ai.DeepSeek, AiProviderNames.DeepSeek);
         changed |= NormalizeAiConnection(config.Ai.OpenAI, AiProviderNames.OpenAI);
+        changed |= NormalizeAiConnection(config.Ai.Hosted, AiProviderNames.Hosted);
 
         AiConnectionProfile active = config.Ai.GetProfile(provider);
         config.ApiUrl = active.BaseUrl;

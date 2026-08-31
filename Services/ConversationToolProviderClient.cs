@@ -59,7 +59,11 @@ public sealed class ConversationToolProviderClient
             payload["tool_choice"] = toolChoice ?? "auto";
         }
 
-        if (AiProviderNames.Normalize(profile.Provider) == AiProviderNames.OpenAI)
+        if (AiProviderNames.Normalize(profile.Provider) == AiProviderNames.Hosted)
+        {
+            payload["max_tokens"] = tokenLimit;
+        }
+        else if (AiProviderNames.Normalize(profile.Provider) == AiProviderNames.OpenAI)
         {
             payload["max_completion_tokens"] = tokenLimit;
         }

@@ -33,7 +33,8 @@ Current version: `0.14.2`
 - **钓鱼伙伴**：玩家到达钓鱼点并抛竿后，NPC 使用铱金鱼竿完成抛竿、等待、收杆和捕获，真实鱼获会交给玩家。
 - **有分寸的社交与礼物**：NPC 会根据性格、关系和情境决定是否接受请求。礼物来自代码控制的合法候选池，支持当面交付和次日惊喜邮件。
 - **主动相遇**：社交导演依据原版日程、近期互动和关系安排自然搭话；合适时 NPC 也可能带着礼物或邮件来找你。
-- **可配置体验**：支持 DeepSeek、OpenAI、兼容 Base URL 和自定义模型；可分别调整对话窗口与主动对话窗口大小。
+- **托管账户**：首次进入存档时可直接在游戏内注册/登录 Vivant Valley 账户；模型请求自动路由到官方服务，玩家无需填写上游 API Key 或创建设备 Key。登录后可选择服务端公开的模型别名，并使用兑换码充值。
+- **可配置体验**：保留 DeepSeek、OpenAI、兼容 Base URL 和自定义模型的高级直连模式；可分别调整对话窗口与主动对话窗口大小。
 
 ### English
 
@@ -54,8 +55,8 @@ Current version: `0.14.2`
 
 - Stardew Valley 1.6 或更高版本
 - SMAPI 4.0 或更高版本
-- DeepSeek 或 OpenAI API Key
-- 可以访问所选 AI 提供商的网络环境
+- Vivant Valley 托管账户（推荐），或高级直连模式下的 DeepSeek/OpenAI API Key
+- 可以访问 Vivant Valley 服务或所选 AI 提供商的网络环境
 
 Vivant Valley 不捆绑 AI 模型。API 调用可能产生由对应提供商收取的费用。
 
@@ -100,7 +101,9 @@ When upgrading, close the game, back up the old `config.json`, remove the old `M
 
 ### 中文
 
-载入存档后，打开 Vivant Valley 设置界面并选择提供商：
+载入存档后，默认会打开 Vivant Valley 托管账户窗口：输入邮箱和至少 12 位密码即可注册或登录。登录成功后模型别名会从服务端目录自动读取（默认 `vv-dialogue`），并可在窗口中切换为其他公开别名；兑换码也可在同一窗口直接充值。
+
+如需使用自己的上游 Key，打开设置界面并切换到高级直连提供商：
 
 - DeepSeek：默认 Base URL 为 `https://api.deepseek.com`。
 - OpenAI：默认 Base URL 为 `https://api.openai.com/v1`。
@@ -245,6 +248,14 @@ dotnet run --project .\tests\ConversationEngineSmoke\ConversationEngineSmoke.csp
 ```
 
 发布输出位于 `dist/VivantValley/` 和 `dist/VivantValley-Release.zip`。/ Release output is placed in `dist/VivantValley/` and `dist/VivantValley-Release.zip`.
+
+## 可选服务器代理 / Optional AI Backend
+
+仓库中的 `backend/` 是一个无第三方依赖的 Node.js OpenAI 兼容代理。它可以把游戏请求转发到 DeepSeek、OpenAI 或其他兼容服务，并将上游 API Key 保留在服务器上。启动方式和环境变量见 [`backend/README.md`](backend/README.md)。
+
+The `backend/` directory contains a dependency-free Node.js OpenAI-compatible proxy. It forwards game requests to DeepSeek, OpenAI, or another compatible service while keeping the upstream API key on the server. See [`backend/README.md`](backend/README.md) for setup and deployment.
+
+本机测试时，在模组设置中将 Base URL 设为 `http://127.0.0.1:8787/v1`，API Key 填服务器的 `BACKEND_API_KEY`。跨机器访问必须通过 HTTPS 反向代理；模组会拒绝非回环地址的明文 HTTP。/ For local testing set the mod Base URL to `http://127.0.0.1:8787/v1` and use the server's `BACKEND_API_KEY` as the API key. Cross-machine access must use an HTTPS reverse proxy; the mod rejects plain HTTP for non-loopback addresses.
 
 ## 兼容身份 / Compatibility Identity
 

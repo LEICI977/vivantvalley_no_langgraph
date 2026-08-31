@@ -160,15 +160,19 @@ public sealed class ModConfig
 
 public static class AiProviderNames
 {
+    public const string Hosted = "Vivant Valley";
     public const string DeepSeek = "DeepSeek";
     public const string OpenAI = "OpenAI";
 
     public static bool IsSupported(string? value)
-        => value?.Trim().Equals(DeepSeek, StringComparison.OrdinalIgnoreCase) == true
+        => value?.Trim().Equals(Hosted, StringComparison.OrdinalIgnoreCase) == true
+           || value?.Trim().Equals(DeepSeek, StringComparison.OrdinalIgnoreCase) == true
            || value?.Trim().Equals(OpenAI, StringComparison.OrdinalIgnoreCase) == true;
 
     public static string Normalize(string? value)
-        => value?.Trim().Equals(OpenAI, StringComparison.OrdinalIgnoreCase) == true
+        => value?.Trim().Equals(Hosted, StringComparison.OrdinalIgnoreCase) == true
+            ? Hosted
+            : value?.Trim().Equals(OpenAI, StringComparison.OrdinalIgnoreCase) == true
             ? OpenAI
             : DeepSeek;
 }
@@ -177,7 +181,14 @@ public sealed class AiProviderSettings
 {
     public int SchemaVersion { get; set; }
 
-    public string ActiveProvider { get; set; } = AiProviderNames.DeepSeek;
+    public string ActiveProvider { get; set; } = AiProviderNames.Hosted;
+
+    /// <summary>Vivant Valley hosted account connection. ApiKey stores only the service session token.</summary>
+    public AiConnectionProfile Hosted { get; set; } = new()
+    {
+        BaseUrl = "https://www.vivantvalley.com.cn/v1",
+        Model = "vv-dialogue",
+    };
 
     public AiConnectionProfile DeepSeek { get; set; } = new()
     {
@@ -192,7 +203,12 @@ public sealed class AiProviderSettings
     };
 
     public AiConnectionProfile GetProfile(string? provider)
-        => AiProviderNames.Normalize(provider) == AiProviderNames.OpenAI ? OpenAI : DeepSeek;
+        => AiProviderNames.Normalize(provider) switch
+        {
+            AiProviderNames.Hosted => Hosted,
+            AiProviderNames.OpenAI => OpenAI,
+            _ => DeepSeek,
+        };
 }
 
 public sealed class AiConnectionProfile

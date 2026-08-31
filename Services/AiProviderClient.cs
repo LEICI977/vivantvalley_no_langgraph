@@ -85,9 +85,12 @@ public static class AiEndpointResolver
     }
 
     public static string GetDefaultBaseUrl(string? provider)
-        => AiProviderNames.Normalize(provider) == AiProviderNames.OpenAI
-            ? "https://api.openai.com/v1"
-            : "https://api.deepseek.com";
+        => AiProviderNames.Normalize(provider) switch
+        {
+            AiProviderNames.Hosted => "https://www.vivantvalley.com.cn/v1",
+            AiProviderNames.OpenAI => "https://api.openai.com/v1",
+            _ => "https://api.deepseek.com",
+        };
 
     private static string NormalizePath(string value)
     {
@@ -239,7 +242,15 @@ public sealed class AiProviderClient : IDeepSeekClient
 
     private static string SerializeRequest(AiRuntimeProfile profile, DeepSeekChatRequest request)
     {
-        object payload = profile.Provider == AiProviderNames.OpenAI
+        object payload = profile.Provider == AiProviderNames.Hosted
+            ? new HostedChatRequest
+            {
+                Model = profile.Model,
+                Messages = request.Messages,
+                MaxTokens = request.MaxTokens,
+                Stream = request.Stream,
+            }
+            : profile.Provider == AiProviderNames.OpenAI
             ? new OpenAiChatRequest
             {
                 Model = profile.Model,
@@ -260,6 +271,14 @@ public sealed class AiProviderClient : IDeepSeekClient
                 Stream = request.Stream,
             };
         return JsonSerializer.Serialize(payload, payload.GetType(), JsonOptions);
+    }
+
+    private sealed class HostedChatRequest
+    {
+        [JsonPropertyName("model")] public string Model { get; init; } = string.Empty;
+        [JsonPropertyName("messages")] public IReadOnlyList<DeepSeekChatMessage> Messages { get; init; } = Array.Empty<DeepSeekChatMessage>();
+        [JsonPropertyName("max_tokens")] public int MaxTokens { get; init; }
+        [JsonPropertyName("stream")] public bool Stream { get; init; }
     }
 
     private static async Task<string> ReadBodyAsync(
@@ -331,7 +350,9 @@ public sealed class AiProviderClient : IDeepSeekClient
         string prefix = response.StatusCode switch
         {
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                => $"{profile.Provider} API 鉴权失败，请检查 API Key。",
+                => profile.Provider == AiProviderNames.Hosted
+                    ? "Vivant Valley 托管账户会话已失效，请重新登录。"
+                    : $"{profile.Provider} API 鉴权失败，请检查 API Key。",
             (HttpStatusCode)429
                 => $"{profile.Provider} API 请求过于频繁或额度不足（HTTP 429）。",
             _ => $"{profile.Provider} API 请求失败（HTTP {(int)response.StatusCode} {response.StatusCode}）。",
