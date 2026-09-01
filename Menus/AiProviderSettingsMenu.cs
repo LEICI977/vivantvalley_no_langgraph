@@ -19,12 +19,14 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
     private readonly Func<AiProviderSettingsDraft, AiSettingsSaveResult> onSave;
     private readonly Func<AiProviderSettingsDraft, CancellationToken, Task<string>> onTest;
     private readonly Action onCancel;
+    private readonly Action? onOpenHosted;
     private readonly Dictionary<string, DraftState> drafts;
     private readonly TextBox baseUrlBox;
     private readonly TextBox modelBox;
     private readonly TextBox apiKeyBox;
     private readonly ClickableComponent deepSeekTab = new(Rectangle.Empty, "DeepSeek");
     private readonly ClickableComponent openAiTab = new(Rectangle.Empty, "OpenAI");
+    private readonly ClickableComponent hostedTab = new(Rectangle.Empty, "Vivant Valley");
     private readonly ClickableComponent saveButton = new(Rectangle.Empty, "save");
     private readonly ClickableComponent testButton = new(Rectangle.Empty, "test");
     private readonly ClickableComponent clearKeyButton = new(Rectangle.Empty, "clear-key");
@@ -51,12 +53,14 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         float conversationUiScale = 0.75f,
         Action<float>? onSaveConversationUiScale = null,
         float proactiveUiScale = 1f,
-        Action<float>? onSaveProactiveUiScale = null)
+        Action<float>? onSaveProactiveUiScale = null,
+        Action? onOpenHosted = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         this.onSave = onSave ?? throw new ArgumentNullException(nameof(onSave));
         this.onTest = onTest ?? throw new ArgumentNullException(nameof(onTest));
         this.onCancel = onCancel ?? throw new ArgumentNullException(nameof(onCancel));
+        this.onOpenHosted = onOpenHosted;
         this.conversationUiScale = ConversationUiLayout.ClampScale(conversationUiScale);
         this.onSaveConversationUiScale = onSaveConversationUiScale;
         this.proactiveUiScale = ConversationUiLayout.ClampScale(proactiveUiScale);
@@ -68,6 +72,8 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
             [AiProviderNames.OpenAI] = DraftState.From(settings.OpenAI),
         };
         activeProvider = AiProviderNames.Normalize(settings.ActiveProvider);
+        if (activeProvider == AiProviderNames.Hosted)
+            activeProvider = AiProviderNames.DeepSeek;
 
         Texture2D textBoxTexture = Game1.content.Load<Texture2D>("LooseSprites\\textBox");
         baseUrlBox = CreateTextBox(textBoxTexture, 512, password: false);
@@ -127,6 +133,11 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         if (openAiTab.containsPoint(x, y))
         {
             SwitchProvider(AiProviderNames.OpenAI);
+            return;
+        }
+        if (hostedTab.containsPoint(x, y))
+        {
+            OpenHosted();
             return;
         }
         if (saveButton.containsPoint(x, y))
@@ -213,6 +224,7 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         apiKeyBox.Hover(x, y);
         SetHoverScale(deepSeekTab, x, y);
         SetHoverScale(openAiTab, x, y);
+        SetHoverScale(hostedTab, x, y);
         SetHoverScale(saveButton, x, y);
         SetHoverScale(testButton, x, y);
         SetHoverScale(clearKeyButton, x, y);
@@ -239,6 +251,7 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
 
         DrawTab(b, deepSeekTab, "DeepSeek", activeProvider == AiProviderNames.DeepSeek);
         DrawTab(b, openAiTab, "OpenAI (GPT)", activeProvider == AiProviderNames.OpenAI);
+        DrawTab(b, hostedTab, "Vivant Valley", false);
 
         DrawLabel(b, "API 基础地址（Base URL）", baseUrlBox.X, baseUrlBox.Y - 26);
         baseUrlBox.Draw(b, drawShadow: false);
@@ -341,6 +354,14 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         Game1.playSound("smallSelect");
     }
 
+    private void OpenHosted()
+    {
+        if (onOpenHosted is null)
+            return;
+        Cancel();
+        onOpenHosted();
+    }
+
     private void StoreActiveDraft()
     {
         DraftState state = drafts[activeProvider];
@@ -389,9 +410,10 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
 
         int innerWidth = width - PanelMargin * 2;
         int tabsY = yPositionOnScreen + 78;
-        int tabWidth = Math.Min(220, (innerWidth - 12) / 2);
+        int tabWidth = Math.Min(220, (innerWidth - 24) / 3);
         deepSeekTab.bounds = new Rectangle(xPositionOnScreen + PanelMargin, tabsY, tabWidth, 44);
         openAiTab.bounds = new Rectangle(deepSeekTab.bounds.Right + 12, tabsY, tabWidth, 44);
+        hostedTab.bounds = new Rectangle(openAiTab.bounds.Right + 12, tabsY, tabWidth, 44);
 
         int fieldX = xPositionOnScreen + PanelMargin;
         int fieldWidth = innerWidth;

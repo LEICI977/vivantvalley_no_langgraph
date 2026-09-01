@@ -103,7 +103,7 @@ When upgrading, close the game, back up the old `config.json`, remove the old `M
 
 载入存档后，默认会打开 Vivant Valley 托管账户窗口：输入邮箱和至少 12 位密码即可注册或登录。登录成功后模型别名会从服务端目录自动读取（默认 `vv-dialogue`），并可在窗口中切换为其他公开别名；兑换码也可在同一窗口直接充值。
 
-如需使用自己的上游 Key，打开设置界面并切换到高级直连提供商：
+如需使用自己的上游 Key，在托管账户窗口点击“直连 API 设置”，或运行 `vivant_settings`，再切换到 DeepSeek 或 OpenAI。两种直连配置会分别保存；以后可随时切回 Vivant Valley 托管账户，不会丢失原来的 Key、Base URL 或模型设置。
 
 - DeepSeek：默认 Base URL 为 `https://api.deepseek.com`。
 - OpenAI：默认 Base URL 为 `https://api.openai.com/v1`。

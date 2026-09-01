@@ -2252,12 +2252,29 @@ public sealed partial class ModEntry : Mod
 
         if (AiProviderNames.Normalize(config.Ai.ActiveProvider) == AiProviderNames.Hosted)
         {
-            Game1.activeClickableMenu = new HostedAccountMenu(
-                AuthenticateHostedAsync,
-                (token, model) => CompleteHostedLogin(token, model),
-                RedeemHostedAsync);
+            OpenHostedAccountMenu();
             return;
         }
+
+        OpenDirectAiSettings();
+    }
+
+    private void OpenHostedAccountMenu()
+    {
+        if (!Context.IsWorldReady)
+            return;
+
+        Game1.activeClickableMenu = new HostedAccountMenu(
+            AuthenticateHostedAsync,
+            (token, model) => CompleteHostedLogin(token, model),
+            RedeemHostedAsync,
+            onOpenDirectSettings: OpenDirectAiSettings);
+    }
+
+    private void OpenDirectAiSettings()
+    {
+        if (!Context.IsWorldReady)
+            return;
 
         Game1.activeClickableMenu = new AiProviderSettingsMenu(
             config.Ai,
@@ -2267,7 +2284,8 @@ public sealed partial class ModEntry : Mod
             conversationUiScale: config.ConversationUiScale,
             onSaveConversationUiScale: SaveConversationUiScale,
             proactiveUiScale: config.ProactiveUiScale,
-            onSaveProactiveUiScale: SaveProactiveUiScale);
+            onSaveProactiveUiScale: SaveProactiveUiScale,
+            onOpenHosted: OpenHostedAccountMenu);
     }
 
     private async Task<(bool Success, string Message, string Token, string Model)> AuthenticateHostedAsync(string email, string password, bool register)

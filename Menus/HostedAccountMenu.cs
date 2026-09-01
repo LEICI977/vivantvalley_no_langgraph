@@ -15,6 +15,7 @@ public sealed class HostedAccountMenu : IClickableMenu
     private readonly Func<string, string, bool, Task<(bool Success, string Message, string Token, string Model)>> authenticate;
     private readonly Action<string, string> onSuccess;
     private readonly Func<string, string, Task<string>>? redeem;
+    private readonly Action? onOpenDirectSettings;
     private readonly TextBox emailBox;
     private readonly TextBox passwordBox;
     private readonly TextBox modelBox;
@@ -22,6 +23,7 @@ public sealed class HostedAccountMenu : IClickableMenu
     private readonly ClickableComponent loginButton = new(Rectangle.Empty, "login");
     private readonly ClickableComponent registerButton = new(Rectangle.Empty, "register");
     private readonly ClickableComponent redeemButton = new(Rectangle.Empty, "redeem");
+    private readonly ClickableComponent directSettingsButton = new(Rectangle.Empty, "direct-settings");
     private Task<(bool Success, string Message, string Token, string Model)>? pending;
     private Task<string>? pendingRedeem;
     private string authToken = string.Empty;
@@ -33,11 +35,13 @@ public sealed class HostedAccountMenu : IClickableMenu
         Func<string, string, bool, Task<(bool Success, string Message, string Token, string Model)>> authenticate,
         Action<string, string> onSuccess,
         Func<string, string, Task<string>>? redeem = null,
-        Action? onCancel = null)
+        Action? onCancel = null,
+        Action? onOpenDirectSettings = null)
     {
         this.authenticate = authenticate ?? throw new ArgumentNullException(nameof(authenticate));
         this.onSuccess = onSuccess ?? throw new ArgumentNullException(nameof(onSuccess));
         this.redeem = redeem;
+        this.onOpenDirectSettings = onOpenDirectSettings;
         Texture2D texture = Game1.content.Load<Texture2D>("LooseSprites\\textBox");
         emailBox = CreateTextBox(texture, 320, false);
         passwordBox = CreateTextBox(texture, 320, true);
@@ -53,8 +57,9 @@ public sealed class HostedAccountMenu : IClickableMenu
         modelBox.X = emailBox.X; modelBox.Y = passwordBox.Y + 78; modelBox.Width = 548; modelBox.Height = 44;
         redeemBox.X = emailBox.X; redeemBox.Y = modelBox.Y + 78; redeemBox.Width = 390; redeemBox.Height = 44;
         redeemButton.bounds = new Rectangle(redeemBox.Right + 12, redeemBox.Y, 146, 44);
-        loginButton.bounds = new Rectangle(emailBox.X, yPositionOnScreen + 404, 170, 48);
-        registerButton.bounds = new Rectangle(loginButton.bounds.Right + 14, loginButton.bounds.Y, 170, 48);
+        loginButton.bounds = new Rectangle(emailBox.X, yPositionOnScreen + 404, 145, 48);
+        registerButton.bounds = new Rectangle(loginButton.bounds.Right + 14, loginButton.bounds.Y, 145, 48);
+        directSettingsButton.bounds = new Rectangle(registerButton.bounds.Right + 14, loginButton.bounds.Y, 230, 48);
         initializeUpperRightCloseButton();
         Select(emailBox);
     }
@@ -98,8 +103,9 @@ public sealed class HostedAccountMenu : IClickableMenu
         modelBox.X = emailBox.X; modelBox.Y = passwordBox.Y + 78;
         redeemBox.X = emailBox.X; redeemBox.Y = modelBox.Y + 78;
         redeemButton.bounds = new Rectangle(redeemBox.Right + 12, redeemBox.Y, 146, 44);
-        loginButton.bounds = new Rectangle(emailBox.X, yPositionOnScreen + 404, 170, 48);
-        registerButton.bounds = new Rectangle(loginButton.bounds.Right + 14, loginButton.bounds.Y, 170, 48);
+        loginButton.bounds = new Rectangle(emailBox.X, yPositionOnScreen + 404, 145, 48);
+        registerButton.bounds = new Rectangle(loginButton.bounds.Right + 14, loginButton.bounds.Y, 145, 48);
+        directSettingsButton.bounds = new Rectangle(registerButton.bounds.Right + 14, loginButton.bounds.Y, 230, 48);
     }
 
     public override void receiveLeftClick(int x, int y, bool playSound = true)
@@ -107,6 +113,7 @@ public sealed class HostedAccountMenu : IClickableMenu
         if (upperRightCloseButton?.containsPoint(x, y) == true) { Close(); return; }
         if (loginButton.containsPoint(x, y)) { Start(false); return; }
         if (registerButton.containsPoint(x, y)) { Start(true); return; }
+        if (directSettingsButton.containsPoint(x, y)) { OpenDirectSettings(); return; }
         if (redeemButton.containsPoint(x, y) && authToken.Length > 0) { StartRedeem(); return; }
         if (Contains(emailBox, x, y)) Select(emailBox);
         else if (Contains(passwordBox, x, y)) Select(passwordBox);
@@ -130,6 +137,7 @@ public sealed class HostedAccountMenu : IClickableMenu
         emailBox.Hover(x, y); passwordBox.Hover(x, y); modelBox.Hover(x, y); redeemBox.Hover(x, y);
         loginButton.scale = loginButton.containsPoint(x, y) ? 1.03f : 1f;
         registerButton.scale = registerButton.containsPoint(x, y) ? 1.03f : 1f;
+        directSettingsButton.scale = directSettingsButton.containsPoint(x, y) ? 1.03f : 1f;
         redeemButton.scale = redeemButton.containsPoint(x, y) ? 1.03f : 1f;
         upperRightCloseButton?.tryHover(x, y, 0.2f);
     }
@@ -148,6 +156,7 @@ public sealed class HostedAccountMenu : IClickableMenu
         DrawButton(b, redeemButton, "兑换额度", pendingRedeem is not null || authToken.Length == 0);
         DrawButton(b, loginButton, "登录", pending is not null);
         DrawButton(b, registerButton, "注册并登录", pending is not null);
+        DrawButton(b, directSettingsButton, "直连 API 设置", false);
         b.DrawString(Game1.smallFont, status, new Vector2(xPositionOnScreen + 36, yPositionOnScreen + 468), statusColor);
         upperRightCloseButton?.draw(b); drawMouse(b);
     }
@@ -173,6 +182,14 @@ public sealed class HostedAccountMenu : IClickableMenu
     private void Close()
     {
         if (closed) return; closed = true; ClearKeyboard(); exitThisMenuNoSound();
+    }
+
+    private void OpenDirectSettings()
+    {
+        if (pending is not null || pendingRedeem is not null || onOpenDirectSettings is null)
+            return;
+        Close();
+        onOpenDirectSettings();
     }
 
     protected override void cleanupBeforeExit() { ClearKeyboard(); base.cleanupBeforeExit(); }
