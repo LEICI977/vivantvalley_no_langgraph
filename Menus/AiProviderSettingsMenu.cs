@@ -19,14 +19,13 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
     private readonly Func<AiProviderSettingsDraft, AiSettingsSaveResult> onSave;
     private readonly Func<AiProviderSettingsDraft, CancellationToken, Task<string>> onTest;
     private readonly Action onCancel;
-    private readonly Action? onOpenHosted;
     private readonly Dictionary<string, DraftState> drafts;
     private readonly TextBox baseUrlBox;
     private readonly TextBox modelBox;
     private readonly TextBox apiKeyBox;
+    private readonly ClickableComponent hostedTab = new(Rectangle.Empty, "Vivant Valley");
     private readonly ClickableComponent deepSeekTab = new(Rectangle.Empty, "DeepSeek");
     private readonly ClickableComponent openAiTab = new(Rectangle.Empty, "OpenAI");
-    private readonly ClickableComponent hostedTab = new(Rectangle.Empty, "Vivant Valley");
     private readonly ClickableComponent saveButton = new(Rectangle.Empty, "save");
     private readonly ClickableComponent testButton = new(Rectangle.Empty, "test");
     private readonly ClickableComponent clearKeyButton = new(Rectangle.Empty, "clear-key");
@@ -36,6 +35,7 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
     private readonly ClickableComponent proactiveUiScaleIncrease = new(Rectangle.Empty, "proactive-ui-scale-increase");
     private readonly Action<float>? onSaveConversationUiScale;
     private readonly Action<float>? onSaveProactiveUiScale;
+    private readonly Action? onOpenHosted;
     private CancellationTokenSource testCancellation = new();
     private Task<string>? pendingTest;
     private string activeProvider;
@@ -60,20 +60,21 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         this.onSave = onSave ?? throw new ArgumentNullException(nameof(onSave));
         this.onTest = onTest ?? throw new ArgumentNullException(nameof(onTest));
         this.onCancel = onCancel ?? throw new ArgumentNullException(nameof(onCancel));
-        this.onOpenHosted = onOpenHosted;
         this.conversationUiScale = ConversationUiLayout.ClampScale(conversationUiScale);
         this.onSaveConversationUiScale = onSaveConversationUiScale;
         this.proactiveUiScale = ConversationUiLayout.ClampScale(proactiveUiScale);
         this.onSaveProactiveUiScale = onSaveProactiveUiScale;
+        this.onOpenHosted = onOpenHosted;
 
         drafts = new Dictionary<string, DraftState>(StringComparer.Ordinal)
         {
             [AiProviderNames.DeepSeek] = DraftState.From(settings.DeepSeek),
             [AiProviderNames.OpenAI] = DraftState.From(settings.OpenAI),
         };
-        activeProvider = AiProviderNames.Normalize(settings.ActiveProvider);
-        if (activeProvider == AiProviderNames.Hosted)
-            activeProvider = AiProviderNames.DeepSeek;
+        string configuredProvider = AiProviderNames.Normalize(settings.ActiveProvider);
+        activeProvider = configuredProvider == AiProviderNames.Hosted
+            ? AiProviderNames.DeepSeek
+            : configuredProvider;
 
         Texture2D textBoxTexture = Game1.content.Load<Texture2D>("LooseSprites\\textBox");
         baseUrlBox = CreateTextBox(textBoxTexture, 512, password: false);
@@ -125,6 +126,11 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
             Cancel();
             return;
         }
+        if (hostedTab.containsPoint(x, y))
+        {
+            OpenHosted();
+            return;
+        }
         if (deepSeekTab.containsPoint(x, y))
         {
             SwitchProvider(AiProviderNames.DeepSeek);
@@ -133,11 +139,6 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         if (openAiTab.containsPoint(x, y))
         {
             SwitchProvider(AiProviderNames.OpenAI);
-            return;
-        }
-        if (hostedTab.containsPoint(x, y))
-        {
-            OpenHosted();
             return;
         }
         if (saveButton.containsPoint(x, y))
@@ -249,9 +250,9 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
             new Vector2(xPositionOnScreen + PanelMargin, yPositionOnScreen + 20),
             Game1.textColor);
 
+        DrawTab(b, hostedTab, "Vivant Valley", false);
         DrawTab(b, deepSeekTab, "DeepSeek", activeProvider == AiProviderNames.DeepSeek);
         DrawTab(b, openAiTab, "OpenAI (GPT)", activeProvider == AiProviderNames.OpenAI);
-        DrawTab(b, hostedTab, "Vivant Valley", false);
 
         DrawLabel(b, "API 基础地址（Base URL）", baseUrlBox.X, baseUrlBox.Y - 26);
         baseUrlBox.Draw(b, drawShadow: false);
@@ -343,6 +344,23 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         onCancel();
     }
 
+    private void OpenHosted()
+    {
+        if (onOpenHosted is null)
+        {
+            statusText = "托管账户入口当前不可用。";
+            statusColor = Color.DarkRed;
+            return;
+        }
+
+        closed = true;
+        ClearKeyboardSubscriber();
+        testCancellation.Cancel();
+        if (ReferenceEquals(Game1.activeClickableMenu, this))
+            exitThisMenuNoSound();
+        onOpenHosted();
+    }
+
     private void SwitchProvider(string provider)
     {
         if (activeProvider == provider)
@@ -352,14 +370,6 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         LoadActiveDraft();
         statusText = string.Empty;
         Game1.playSound("smallSelect");
-    }
-
-    private void OpenHosted()
-    {
-        if (onOpenHosted is null)
-            return;
-        Cancel();
-        onOpenHosted();
     }
 
     private void StoreActiveDraft()
@@ -411,9 +421,9 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         int innerWidth = width - PanelMargin * 2;
         int tabsY = yPositionOnScreen + 78;
         int tabWidth = Math.Min(220, (innerWidth - 24) / 3);
-        deepSeekTab.bounds = new Rectangle(xPositionOnScreen + PanelMargin, tabsY, tabWidth, 44);
+        hostedTab.bounds = new Rectangle(xPositionOnScreen + PanelMargin, tabsY, tabWidth, 44);
+        deepSeekTab.bounds = new Rectangle(hostedTab.bounds.Right + 12, tabsY, tabWidth, 44);
         openAiTab.bounds = new Rectangle(deepSeekTab.bounds.Right + 12, tabsY, tabWidth, 44);
-        hostedTab.bounds = new Rectangle(openAiTab.bounds.Right + 12, tabsY, tabWidth, 44);
 
         int fieldX = xPositionOnScreen + PanelMargin;
         int fieldWidth = innerWidth;

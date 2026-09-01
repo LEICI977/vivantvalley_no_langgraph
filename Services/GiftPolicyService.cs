@@ -115,7 +115,7 @@ public sealed class GiftPolicyService
         if (entries.Count == 0)
             return Blocked(SocialGiftRejectionReason.CatalogUnavailable);
 
-        var accepted = new List<(SocialGiftCandidate candidate, bool isNpcSpecific, int priority)>();
+        var accepted = new List<RankedCandidate>();
         var rejected = new List<SocialGiftCandidateRejection>();
         foreach (SocialGiftPoolEntry entry in entries)
         {
@@ -140,17 +140,23 @@ public sealed class GiftPolicyService
                 continue;
             }
 
-            accepted.Add((candidate, npcSpecific, entry.Priority));
+            accepted.Add(new RankedCandidate(
+                candidate,
+                npcSpecific ? 1 : 0,
+                0,
+                entry.Priority));
         }
 
-        // 简单排序：NPC 专属优先，然后按优先级，最后按 key 字母排序保证稳定性
-        SocialGiftCandidate[] candidates = accepted
-            .OrderByDescending(item => item.isNpcSpecific)  // NPC 专属优先
-            .ThenByDescending(item => item.priority)  // 按 priority 排序
-            .ThenBy(item => item.candidate.Key, StringComparer.Ordinal)  // 字母排序保证稳定
-            .Take(options.MaximumCandidateCount)
-            .Select(item => item.candidate)
-            .ToArray();
+        // Rank deterministically before applying per-category quotas.
+        List<RankedCandidate> ranked = accepted
+            .OrderByDescending(item => item.NpcSpecific)
+            .ThenByDescending(item => item.MatchedTagCount)
+            .ThenByDescending(item => item.Priority)
+            .ThenBy(item => item.Candidate.Key, StringComparer.Ordinal)
+            .ToList();
+        SocialGiftCandidate[] candidates = SelectBalancedCandidates(
+            ranked,
+            options.MaximumCandidateCount);
 
         return new SocialGiftCandidateSet
         {

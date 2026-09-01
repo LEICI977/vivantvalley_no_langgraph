@@ -212,6 +212,8 @@ public sealed class AiProviderClient : IDeepSeekClient
         string json = SerializeRequest(profile, request);
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, profile.Endpoint);
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", profile.ApiKey);
+        if (profile.Provider == AiProviderNames.Hosted)
+            httpRequest.Headers.TryAddWithoutValidation("Idempotency-Key", request.IdempotencyKey);
         httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(
             request.Stream ? "text/event-stream" : "application/json"));
         httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -317,6 +319,9 @@ public sealed class AiProviderClient : IDeepSeekClient
             throw new DeepSeekConfigurationException("聊天消息不能为空。");
         if (request.MaxTokens < 1)
             throw new DeepSeekConfigurationException("最大输出 Token 必须大于零。");
+        if (profile.Provider == AiProviderNames.Hosted
+            && (string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Length > 128))
+            throw new DeepSeekConfigurationException("托管请求幂等键无效。");
         if (request.Stream != expectedStream)
             throw new DeepSeekConfigurationException(expectedStream ? "流式请求必须启用 stream。" : "普通请求不能启用 stream。");
         if (request.Messages.Any(message =>

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -161,7 +162,8 @@ internal sealed class InProcessConversationEngine
                         tools,
                         toolChoice: "auto",
                         run.MaxOutputTokens,
-                        cancellationToken)
+                        cancellationToken,
+                        idempotencyKey: CreateIdempotencyKey(run.RequestId, "action", attempt))
                     .ConfigureAwait(false);
                 if (response.ToolCalls.Count == 0)
                 {
@@ -252,7 +254,8 @@ internal sealed class InProcessConversationEngine
                         finalTool,
                         forcedChoice,
                         run.MaxOutputTokens,
-                        cancellationToken)
+                        cancellationToken,
+                        idempotencyKey: CreateIdempotencyKey(run.RequestId, "final", attempt))
                     .ConfigureAwait(false);
                 if (response.ToolCalls.Count != 1
                     || !response.ToolCalls[0].Name.Equals(FinalToolName, StringComparison.OrdinalIgnoreCase))
@@ -283,6 +286,13 @@ internal sealed class InProcessConversationEngine
         }
 
         throw new ConversationProtocolException("Provider final response failed.");
+    }
+
+    private static string CreateIdempotencyKey(string requestId, string phase, int attempt)
+    {
+        byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"vivant-valley:{requestId}:{phase}:{attempt}"));
+        return Convert.ToHexString(digest).ToLowerInvariant();
     }
 
     private async Task<GameBridgeToolResult> ExecuteToolAsync(

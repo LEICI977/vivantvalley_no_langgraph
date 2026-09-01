@@ -453,6 +453,7 @@ static async Task TestConversationToolProviderContractAsync()
         request.Uri.AbsoluteUri == "https://api.deepseek.com/chat/completions",
         "Tool provider used an unexpected endpoint.");
     Assert(request.Authorization == "Bearer tool-secret", "Tool provider used the wrong API key.");
+    Assert(request.IdempotencyKey.Length == 0, "Hosted idempotency leaked into a direct provider request.");
     using JsonDocument requestDocument = JsonDocument.Parse(request.Body);
     JsonElement root = requestDocument.RootElement;
     Assert(root.GetProperty("tools").GetArrayLength() == 1, "Tool definitions were omitted.");
@@ -481,6 +482,20 @@ static async Task TestConversationToolProviderContractAsync()
         "OpenAI tool token limit was wrong.");
     Assert(!openAiRoot.TryGetProperty("max_tokens", out _), "DeepSeek token field leaked into OpenAI tools.");
     Assert(!openAiRoot.TryGetProperty("thinking", out _), "DeepSeek thinking leaked into OpenAI tools.");
+
+    AiRuntimeProfile hostedProfile = CreateAiProfile(
+        AiProviderNames.Hosted,
+        "https://www.vivantvalley.com.cn/v1",
+        "vv-dialogue",
+        "vv_mod_test");
+    await client.CompleteAsync(
+        hostedProfile,
+        new[] { ConversationProviderMessage.User("hello") },
+        new[] { toolDocument.RootElement.Clone() },
+        toolChoice: "auto",
+        maxOutputTokens: 640,
+        idempotencyKey: "tool-request-1");
+    Assert(handler.Requests[2].IdempotencyKey == "tool-request-1", "Hosted tool request omitted its idempotency key.");
 }
 
 static async Task TestInProcessConversationOrchestratorAsync()
@@ -519,10 +534,10 @@ static async Task TestInProcessConversationOrchestratorAsync()
             });
         });
     AiRuntimeProfile profile = CreateAiProfile(
-        AiProviderNames.DeepSeek,
-        "https://api.deepseek.com",
-        "deepseek-tool-test",
-        "tool-secret");
+        AiProviderNames.Hosted,
+        "https://www.vivantvalley.com.cn/v1",
+        "vv-dialogue",
+        "vv_mod_test");
     NpcContextSnapshot snapshot = CreateToolConversationSnapshot("ctx-move");
 
     LangGraphResponse initial = await orchestrator.DecideAsync(
@@ -548,6 +563,12 @@ static async Task TestInProcessConversationOrchestratorAsync()
     Assert(completed.ToolExecution?.Ok == true, "Authoritative move result was not returned.");
     Assert(completed.Decision?.TravelBarks.Count == 1, "Successful move lost its travel bark.");
     Assert(handler.Requests.Count == 2, "Move flow made an unexpected number of provider requests.");
+    Assert(
+        handler.Requests.All(request => request.IdempotencyKey.Length == 64),
+        "Hosted orchestration request omitted its deterministic idempotency key.");
+    Assert(
+        handler.Requests[0].IdempotencyKey != handler.Requests[1].IdempotencyKey,
+        "Action and finalization requests reused one idempotency key.");
     using JsonDocument finalRequest = JsonDocument.Parse(handler.Requests[1].Body);
     Assert(
         finalRequest.RootElement.GetProperty("messages").EnumerateArray().Any(message =>
@@ -825,6 +846,7 @@ static async Task TestAiProviderPayloadsAsync()
         Assert(!root.TryGetProperty("max_completion_tokens", out _), "OpenAI token field leaked into DeepSeek.");
     }
     Assert(deepSeekCall.Authorization == "Bearer deep-key", "DeepSeek authorization used the wrong key.");
+    Assert(deepSeekCall.IdempotencyKey.Length == 0, "Hosted idempotency leaked into DeepSeek.");
 
     handler.Requests.Clear();
     profile = CreateAiProfile(
@@ -850,6 +872,17 @@ static async Task TestAiProviderPayloadsAsync()
         Assert(!root.TryGetProperty("reasoning_effort", out _), "DeepSeek reasoning effort leaked into OpenAI.");
         Assert(!root.TryGetProperty("max_tokens", out _), "DeepSeek max_tokens leaked into OpenAI.");
     }
+
+    handler.Requests.Clear();
+    profile = CreateAiProfile(
+        AiProviderNames.Hosted,
+        "https://www.vivantvalley.com.cn/v1",
+        "vv-dialogue",
+        "vv_mod_test");
+    string hostedReply = await client.CompleteChatAsync("ignored-key", request);
+    Assert(hostedReply == "provider-ok", "Hosted adapter didn't parse the reply.");
+    CapturedHttpRequest hostedCall = handler.Requests.Single();
+    Assert(hostedCall.IdempotencyKey == request.IdempotencyKey, "Hosted chat request omitted its stable idempotency key.");
 }
 
 static async Task TestOpenAiStreamingAdapterAsync()
@@ -1207,7 +1240,10 @@ static async Task TestSummaryLengthLimitAsync()
             RecentMessagesToKeep = 2,
         });
 
-    Assert(result.UpdatedMemory.Summary.Length == 6001, "Long summary wasn't capped with an ellipsis.");
+    Assert(
+        result.UpdatedMemory.Summary.Length == 2001
+        && result.UpdatedMemory.Summary.EndsWith('…'),
+        "Long summary wasn't capped with an ellipsis.");
 }
 
 static void TestNarrativeStoreIsolation()
@@ -2652,7 +2688,7 @@ static void Assert(bool condition, string message)
         throw new InvalidOperationException(message);
 }
 
-sealed record CapturedHttpRequest(Uri Uri, string Authorization, string Body);
+sealed record CapturedHttpRequest(Uri Uri, string Authorization, string IdempotencyKey, string Body);
 
 sealed class RecordingHttpHandler : HttpMessageHandler
 {
@@ -2675,6 +2711,9 @@ sealed class RecordingHttpHandler : HttpMessageHandler
         Requests.Add(new CapturedHttpRequest(
             request.RequestUri ?? throw new InvalidOperationException("Request URI is missing."),
             request.Headers.Authorization?.ToString() ?? string.Empty,
+            request.Headers.TryGetValues("Idempotency-Key", out IEnumerable<string>? keys)
+                ? keys.Single()
+                : string.Empty,
             body));
         return responseFactory();
     }

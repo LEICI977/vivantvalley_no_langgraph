@@ -273,6 +273,9 @@ public sealed class DeepSeekThinkingOptions
 /// </summary>
 public sealed class DeepSeekChatRequest
 {
+    [JsonIgnore]
+    public string IdempotencyKey { get; set; } = Guid.NewGuid().ToString("N");
+
     [JsonPropertyName("model")]
     public string Model { get; set; } = "deepseek-v4-flash";
 

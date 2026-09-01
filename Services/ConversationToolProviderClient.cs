@@ -32,7 +32,8 @@ public sealed class ConversationToolProviderClient
         IReadOnlyList<JsonElement> tools,
         object? toolChoice,
         int maxOutputTokens,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? idempotencyKey = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         ArgumentNullException.ThrowIfNull(messages);
@@ -78,6 +79,15 @@ public sealed class ConversationToolProviderClient
         string json = JsonSerializer.Serialize(payload, JsonOptions);
         using var request = new HttpRequestMessage(HttpMethod.Post, profile.Endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", profile.ApiKey);
+        if (AiProviderNames.Normalize(profile.Provider) == AiProviderNames.Hosted)
+        {
+            string key = string.IsNullOrWhiteSpace(idempotencyKey)
+                ? Guid.NewGuid().ToString("N")
+                : idempotencyKey.Trim();
+            if (key.Length > 128)
+                throw new DeepSeekConfigurationException("托管请求幂等键无效。");
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+        }
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 

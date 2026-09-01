@@ -1,3 +1,0 @@
-这是源码迁移包，不是可直接安装的 Mod。
-生成可安装 ZIP 前必须提供已安装 SMAPI 的 Stardew Valley 目录。
-完成后执行：GAME_PATH=/path/to/StardewValley ./scripts/build-linux.sh

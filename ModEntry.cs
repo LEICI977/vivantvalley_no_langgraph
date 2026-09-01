@@ -2252,29 +2252,16 @@ public sealed partial class ModEntry : Mod
 
         if (AiProviderNames.Normalize(config.Ai.ActiveProvider) == AiProviderNames.Hosted)
         {
-            OpenHostedAccountMenu();
+            Game1.activeClickableMenu = new HostedAccountMenu(
+                AuthenticateHostedAsync,
+                (token, model, balance) => CompleteHostedLogin(token, model, balance),
+                RedeemHostedAsync,
+                onOpenDirectSettings: OpenDirectProviderSettings,
+                refreshBalance: FetchHostedBalanceAsync,
+                initialToken: config.Ai.Hosted.ApiKey,
+                initialModel: config.Ai.Hosted.Model);
             return;
         }
-
-        OpenDirectAiSettings();
-    }
-
-    private void OpenHostedAccountMenu()
-    {
-        if (!Context.IsWorldReady)
-            return;
-
-        Game1.activeClickableMenu = new HostedAccountMenu(
-            AuthenticateHostedAsync,
-            (token, model) => CompleteHostedLogin(token, model),
-            RedeemHostedAsync,
-            onOpenDirectSettings: OpenDirectAiSettings);
-    }
-
-    private void OpenDirectAiSettings()
-    {
-        if (!Context.IsWorldReady)
-            return;
 
         Game1.activeClickableMenu = new AiProviderSettingsMenu(
             config.Ai,
@@ -2285,10 +2272,36 @@ public sealed partial class ModEntry : Mod
             onSaveConversationUiScale: SaveConversationUiScale,
             proactiveUiScale: config.ProactiveUiScale,
             onSaveProactiveUiScale: SaveProactiveUiScale,
-            onOpenHosted: OpenHostedAccountMenu);
+            onOpenHosted: OpenHostedAccountSettings);
     }
 
-    private async Task<(bool Success, string Message, string Token, string Model)> AuthenticateHostedAsync(string email, string password, bool register)
+    private void OpenHostedAccountSettings()
+    {
+        Game1.activeClickableMenu = new HostedAccountMenu(
+            AuthenticateHostedAsync,
+            (token, model, balance) => CompleteHostedLogin(token, model, balance),
+            RedeemHostedAsync,
+            onOpenDirectSettings: OpenDirectProviderSettings,
+            refreshBalance: FetchHostedBalanceAsync,
+            initialToken: config.Ai.Hosted.ApiKey,
+            initialModel: config.Ai.Hosted.Model);
+    }
+
+    private void OpenDirectProviderSettings()
+    {
+        Game1.activeClickableMenu = new AiProviderSettingsMenu(
+            config.Ai,
+            SaveAiProviderSettings,
+            TestAiProviderSettingsAsync,
+            onCancel: () => { },
+            conversationUiScale: config.ConversationUiScale,
+            onSaveConversationUiScale: SaveConversationUiScale,
+            proactiveUiScale: config.ProactiveUiScale,
+            onSaveProactiveUiScale: SaveProactiveUiScale,
+            onOpenHosted: OpenHostedAccountSettings);
+    }
+
+    private async Task<(bool Success, string Message, string Token, string Model, long BalanceMicros)> AuthenticateHostedAsync(string email, string password, bool register)
     {
         string route = register ? "/api/v1/mod/auth/register" : "/api/v1/mod/auth/login";
         using var request = new HttpRequestMessage(HttpMethod.Post, HostedServiceOrigin + route)
@@ -2303,10 +2316,11 @@ public sealed partial class ModEntry : Mod
             if (!response.IsSuccessStatusCode)
             {
                 string message = document.RootElement.TryGetProperty("error", out JsonElement error) && error.TryGetProperty("message", out JsonElement text) ? text.GetString() ?? "请求失败。" : "请求失败。";
-                return (false, message, string.Empty, string.Empty);
+                return (false, message, string.Empty, string.Empty, -1);
             }
             string token = document.RootElement.GetProperty("access_token").GetString() ?? string.Empty;
             string model = "vv-dialogue";
+            long balanceMicros = -1;
             try
             {
                 using var bootstrap = new HttpRequestMessage(HttpMethod.Get, HostedServiceOrigin + "/api/v1/mod/bootstrap");
@@ -2317,15 +2331,35 @@ public sealed partial class ModEntry : Mod
                     using JsonDocument catalog = JsonDocument.Parse(await bootstrapResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
                     if (catalog.RootElement.TryGetProperty("models", out JsonElement models) && models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0)
                         model = models[0].GetProperty("alias").GetString() ?? model;
+                    if (catalog.RootElement.TryGetProperty("wallet", out JsonElement wallet)
+                        && wallet.TryGetProperty("available_micros", out JsonElement available)
+                        && available.TryGetInt64(out long parsedBalance))
+                        balanceMicros = parsedBalance;
                 }
             }
             catch (Exception ex) { Monitor.Log($"读取托管模型目录失败，将使用默认模型：{ex.Message}", LogLevel.Debug); }
-            return (true, "", token, model);
+            return (true, "", token, model, balanceMicros);
         }
-        catch (JsonException) { return (false, "服务端返回无效响应。", string.Empty, string.Empty); }
+        catch (JsonException) { return (false, "服务端返回无效响应。", string.Empty, string.Empty, -1); }
     }
 
-    private void CompleteHostedLogin(string token, string model)
+    private async Task<long> FetchHostedBalanceAsync(string token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, HostedServiceOrigin + "/api/v1/mod/bootstrap");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using HttpResponseMessage response = await aiHttpClient.SendAsync(request).ConfigureAwait(false);
+        string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        using JsonDocument document = JsonDocument.Parse(body);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException("托管登录状态已失效，请重新登录。");
+        if (!document.RootElement.TryGetProperty("wallet", out JsonElement wallet)
+            || !wallet.TryGetProperty("available_micros", out JsonElement available)
+            || !available.TryGetInt64(out long balance))
+            throw new InvalidOperationException("服务端未返回有效余额。");
+        return balance;
+    }
+
+    private void CompleteHostedLogin(string token, string model, long balanceMicros)
     {
         config.Ai.ActiveProvider = AiProviderNames.Hosted;
         config.Ai.Hosted.BaseUrl = "https://www.vivantvalley.com.cn/v1";
